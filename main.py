@@ -13,13 +13,12 @@ def run(query: str, output_path: str | None, stream: bool) -> None:
             print(event)
     result = service.run(query=query)
     report = result.get("final_report", "")
-    if output_path:
-        path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(report, encoding="utf-8")
-        print(f"saved: {path}")
-    else:
-        print(report)
+    # 기본 저장 경로: reports/battery_strategy_report.md
+    path_str = output_path or "reports/battery_strategy_report.md"
+    path = Path(path_str)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(report, encoding="utf-8")
+    print(f"saved: {path}")
     print(result.get("criteria", {}))
     print(f"retry_count={result.get('retry_count', 0)}")
 
@@ -31,7 +30,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="LG에너지솔루션과 CATL의 포트폴리오 다각화 전략을 비교해줘",
     )
-    parser.add_argument("--output", type=str, default=None)
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="reports/battery_strategy_report.md",
+        help="보고서를 저장할 파일 경로 (기본: reports/battery_strategy_report.md)",
+    )
     parser.add_argument("--stream", action="store_true")
     return parser.parse_args()
 

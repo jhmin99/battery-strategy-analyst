@@ -12,13 +12,10 @@ def chunk_text(line: str, size: int = 70) -> list[str]:
 
 
 def main() -> None:
-    md_path = Path("/Users/baekkangmin/ai_agent/reports/battery_strategy_report.md")
-    pdf_path = Path(
-        "/Users/baekkangmin/ai_agent/reports/battery_strategy_report.pdf"
-    )
-    font_path = Path(
-        "/Users/baekkangmin/Desktop/SKALA/rag/ai-service/langgraph-v1/30-Project/data/fonts/NanumGothic.ttf"
-    )
+    base_dir = Path(__file__).resolve().parent
+    md_path = base_dir / "reports" / "battery_strategy_report.md"
+    pdf_path = base_dir / "reports" / "battery_strategy_report.pdf"
+    font_path = base_dir / "data" / "fonts" / "NanumGothic.ttf"
 
     text = md_path.read_text(encoding="utf-8")
 

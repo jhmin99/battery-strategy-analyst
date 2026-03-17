@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -19,6 +20,12 @@ from vectorstore import (
 )
 
 from agents.schemas import CompanyPlan, WorkflowState
+from pathlib import Path
+
+try:
+    from tavily import TavilyClient
+except Exception:  # pragma: no cover - optional dependency
+    TavilyClient = None  # type: ignore[assignment]
 
 
 def safe_content(value: Any) -> str:
@@ -29,24 +36,93 @@ def safe_content(value: Any) -> str:
     return str(value)
 
 
-def fetch_news_rss(query: str, max_results: int) -> list[dict[str, str]]:
+def _clean_snippet(text: str, max_chars: int = 260) -> str:
+    """문장 단위로 잘라 깔끔한 핵심 문장만 남긴다."""
+    if not text:
+        return ""
+    # 공백 정리
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= max_chars:
+        snippet = cleaned
+    else:
+        snippet = cleaned[:max_chars]
+        # 문장 경계 찾기 (한글 '다.' / '. ' / '!' / '?')
+        candidates = [
+            snippet.rfind("다."),
+            snippet.rfind(". "),
+            snippet.rfind("! "),
+            snippet.rfind("? "),
+        ]
+        end_idx = max(candidates)
+        if end_idx != -1:
+            snippet = snippet[: end_idx + 2]
+    return snippet.strip()
+
+
+def _fetch_news_tavily(query: str, max_results: int) -> list[dict[str, str]]:
+    """Tavily 기반 뉴스/웹 검색. 실패 시 빈 리스트 반환."""
+    if TavilyClient is None:
+        return []
+    api_key = os.getenv("TAVILY_API_KEY", "")
+    if not api_key:
+        return []
+    try:
+        client = TavilyClient(api_key=api_key)
+        response: dict[str, Any] = client.search(
+            query=query,
+            max_results=max_results,
+            search_depth="basic",
+            include_answer=False,
+            include_images=False,
+            include_raw_content=False,
+        )
+        results: list[dict[str, str]] = []
+        for item in response.get("results", [])[:max_results]:
+            results.append(
+                {
+                    "title": safe_content(item.get("title")),
+                    "link": safe_content(item.get("url")),
+                    "pub_date": safe_content(
+                        item.get("published_date") or item.get("date")
+                    ),
+                    "source": safe_content(item.get("source") or item.get("url")),
+                }
+            )
+        return results
+    except Exception:
+        return []
+
+
+def _fetch_news_rss(query: str, max_results: int) -> list[dict[str, str]]:
+    """Google News RSS 기반 뉴스 검색 (Tavily 실패 시 백업)."""
     encoded = urllib.parse.quote_plus(query)
     url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
-    with urllib.request.urlopen(url, timeout=10) as response:
-        raw = response.read()
-    root = ET.fromstring(raw)
-    items = root.findall(".//item")
-    results: list[dict[str, str]] = []
-    for item in items[:max_results]:
-        results.append(
-            {
-                "title": safe_content(item.findtext("title")),
-                "link": safe_content(item.findtext("link")),
-                "pub_date": safe_content(item.findtext("pubDate")),
-                "source": safe_content(item.findtext("source")),
-            }
-        )
-    return results
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            raw = response.read()
+        root = ET.fromstring(raw)
+        items = root.findall(".//item")
+        results: list[dict[str, str]] = []
+        for item in items[:max_results]:
+            results.append(
+                {
+                    "title": safe_content(item.findtext("title")),
+                    "link": safe_content(item.findtext("link")),
+                    "pub_date": safe_content(item.findtext("pubDate")),
+                    "source": safe_content(item.findtext("source")),
+                }
+            )
+        return results
+    except Exception:
+        return []
+
+
+def fetch_news(query: str, max_results: int) -> list[dict[str, str]]:
+    """Tavily 우선, 실패 시 RSS로 뉴스/웹 검색."""
+    results = _fetch_news_tavily(query=query, max_results=max_results)
+    if results:
+        return results
+    return _fetch_news_rss(query=query, max_results=max_results)
 
 
 def collect_news(
@@ -56,13 +132,13 @@ def collect_news(
     news_items: list[dict[str, str]] = []
     coverage = {"positive": False, "negative": False}
     for query in plan.positive_queries:
-        for item in fetch_news_rss(query=query, max_results=max_results_per_query):
+        for item in fetch_news(query=query, max_results=max_results_per_query):
             item["query_type"] = "positive"
             item["query"] = query
             news_items.append(item)
             coverage["positive"] = True
     for query in plan.negative_queries:
-        for item in fetch_news_rss(query=query, max_results=max_results_per_query):
+        for item in fetch_news(query=query, max_results=max_results_per_query):
             item["query_type"] = "negative"
             item["query"] = query
             news_items.append(item)
@@ -74,7 +150,7 @@ def format_sources(chunks: list[dict[str, str]]) -> str:
     lines = []
     for idx, source in enumerate(chunks, start=1):
         lines.append(
-            f"{idx}. {source['source']} p.{source['page']} - {source['snippet']}"
+            f"{idx}. {source['filename']} p.{source['page']} - {source['snippet']}"
         )
     return "\n".join(lines)
 
@@ -125,11 +201,13 @@ def run_rag(
             if key in seen:
                 continue
             seen.add(key)
+            src_path = Path(str(chunk.metadata["source"]))
             selected_chunks.append(
                 {
-                    "source": chunk.metadata["source"],
+                    "source": str(chunk.metadata["source"]),
+                    "filename": src_path.name,
                     "page": str(chunk.metadata["page"]),
-                    "snippet": chunk.content[:240],
+                    "snippet": _clean_snippet(chunk.content),
                 }
             )
             if len(selected_chunks) >= 8:
@@ -238,16 +316,19 @@ def build_report(state: WorkflowState) -> str:
     all_news = state.get("lg_news", [])[:4] + state.get("catl_news", [])[:4]
     reference_lines: list[str] = []
     for src in lg_sources:
+        filename = Path(src["source"]).name
         reference_lines.append(
-            f"- [기관보고서] LG PDF ({src['source']}, p.{src['page']})"
+            f"- [기관보고서] LG PDF ({filename}, p.{src['page']})"
         )
     for src in catl_sources:
+        filename = Path(src["source"]).name
         reference_lines.append(
-            f"- [기관보고서] CATL PDF ({src['source']}, p.{src['page']})"
+            f"- [기관보고서] CATL PDF ({filename}, p.{src['page']})"
         )
     for src in market_sources:
+        filename = Path(src["source"]).name
         reference_lines.append(
-            f"- [기관보고서] Market PDF ({src['source']}, p.{src['page']})"
+            f"- [기관보고서] Market PDF ({filename}, p.{src['page']})"
         )
     for item in all_news:
         reference_lines.append(
@@ -270,6 +351,9 @@ def build_report(state: WorkflowState) -> str:
         f"- O: {', '.join(catl_swot.get('O', []))}",
         f"- T: {', '.join(catl_swot.get('T', []))}",
     ]
+    # SUMMARY는 market_assessment 전체를 사용하되, 비어 있으면 기본 문구 사용
+    summary_src = state.get("market_assessment", "") or ""
+    summary_text = summary_src.strip() or "- 전체 보고서의 1/2 요약 내용"
     return "\n".join(
         [
             "# 배터리 시장 전략 분석 보고서",
@@ -278,7 +362,7 @@ def build_report(state: WorkflowState) -> str:
             "---",
             "",
             "## SUMMARY",
-            state.get("market_assessment", "")[:1200] or "- 전체 보고서의 1/2 요약 내용",
+            summary_text,
             "",
             "---",
             "",

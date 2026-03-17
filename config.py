@@ -15,7 +15,7 @@ def load_env_file(env_path: Path) -> None:
         key, value = raw.split("=", 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
+        os.environ[key] = value
 
 
 @dataclass

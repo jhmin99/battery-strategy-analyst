@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from config import Settings
 
-from agents.core import collect_news, run_rag, summarize_tech
+from agents.core import (
+    collect_news,
+    run_rag,
+    summarize_diversification,
+    summarize_investment_and_capability,
+    summarize_portfolio,
+    summarize_tech,
+)
 from agents.schemas import CompanyPlan, WorkflowState
 
 
@@ -32,10 +39,29 @@ class CATLTeamAgents:
         return {"catl_news": news, "catl_query_coverage": coverage}
 
     def tech_node(self, state: WorkflowState) -> WorkflowState:
-        summary = summarize_tech(
+        tech_summary = summarize_tech(
             settings=self.settings,
             company_name=self.plan.name,
             rag_summary=state.get("catl_rag", ""),
             news_items=state.get("catl_news", []),
         )
-        return {"catl_tech_summary": summary}
+        sources = state.get("catl_sources", [])
+        news = state.get("catl_news", [])
+        return {
+            "catl_tech_summary": tech_summary,
+            "catl_portfolio": summarize_portfolio(
+                settings=self.settings, company_name=self.plan.name, sources=sources
+            ),
+            "catl_diversification": summarize_diversification(
+                settings=self.settings,
+                company_name=self.plan.name,
+                sources=sources,
+                news_items=news,
+            ),
+            "catl_investment": summarize_investment_and_capability(
+                settings=self.settings,
+                company_name=self.plan.name,
+                sources=sources,
+                news_items=news,
+            ),
+        }

@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from config import Settings
 
-from agents.core import collect_news, run_rag, summarize_tech
+from agents.core import (
+    collect_news,
+    run_rag,
+    summarize_diversification,
+    summarize_investment_and_capability,
+    summarize_portfolio,
+    summarize_tech,
+)
 from agents.schemas import CompanyPlan, WorkflowState
 
 
@@ -32,10 +39,29 @@ class LGTeamAgents:
         return {"lg_news": news, "lg_query_coverage": coverage}
 
     def tech_node(self, state: WorkflowState) -> WorkflowState:
-        summary = summarize_tech(
+        tech_summary = summarize_tech(
             settings=self.settings,
             company_name=self.plan.name,
             rag_summary=state.get("lg_rag", ""),
             news_items=state.get("lg_news", []),
         )
-        return {"lg_tech_summary": summary}
+        sources = state.get("lg_sources", [])
+        news = state.get("lg_news", [])
+        return {
+            "lg_tech_summary": tech_summary,
+            "lg_portfolio": summarize_portfolio(
+                settings=self.settings, company_name=self.plan.name, sources=sources
+            ),
+            "lg_diversification": summarize_diversification(
+                settings=self.settings,
+                company_name=self.plan.name,
+                sources=sources,
+                news_items=news,
+            ),
+            "lg_investment": summarize_investment_and_capability(
+                settings=self.settings,
+                company_name=self.plan.name,
+                sources=sources,
+                news_items=news,
+            ),
+        }

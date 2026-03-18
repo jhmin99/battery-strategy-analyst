@@ -59,6 +59,18 @@ def _clean_snippet(text: str, max_chars: int = 260) -> str:
     return snippet.strip()
 
 
+def _rag_context_from_sources(sources: list[dict[str, str]], max_items: int = 10) -> str:
+    """LLM 입력용 근거 컨텍스트를 간결하게 구성."""
+    lines: list[str] = []
+    for src in sources[:max_items]:
+        filename = Path(src.get("source", "")).name or src.get("filename", "N/A")
+        page = src.get("page", "")
+        snippet = src.get("snippet", "")
+        if snippet:
+            lines.append(f"- ({filename} p.{page}) {snippet}")
+    return "\n".join(lines)
+
+
 def _fetch_news_tavily(query: str, max_results: int) -> list[dict[str, str]]:
     """Tavily 기반 뉴스/웹 검색. 실패 시 빈 리스트 반환."""
     if TavilyClient is None:
@@ -255,6 +267,69 @@ def summarize_tech(
     return invoke_llm(settings=settings, prompt=prompt)
 
 
+def summarize_portfolio(
+    settings: Settings,
+    company_name: str,
+    sources: list[dict[str, str]],
+) -> str:
+    context = _rag_context_from_sources(sources)
+    prompt = (
+        f"{company_name}의 '현재 사업 포트폴리오'를 6~10줄로 요약하세요.\n"
+        "요구사항: 제품/고객/지역/응용처(EV/HEV/ESS/소형/로봇 등) 축으로 정리하고, 숫자/키워드는 가능한 한 유지하세요.\n"
+        "근거(발췌):\n"
+        f"{context}\n"
+    )
+    return invoke_llm(settings=settings, prompt=prompt)
+
+
+def summarize_diversification(
+    settings: Settings,
+    company_name: str,
+    sources: list[dict[str, str]],
+    news_items: list[dict[str, str]],
+) -> str:
+    context = _rag_context_from_sources(sources)
+    news_text = "\n".join(
+        [
+            f"- {item['title']} | {item['source']} | {item['pub_date']}"
+            for item in news_items[:8]
+        ]
+    )
+    prompt = (
+        f"{company_name}의 '포트폴리오 다각화 전략'을 6~10줄로 정리하세요.\n"
+        "요구사항: (1) 다각화 축(제품/지역/고객/기술), (2) 왜 지금 하는지(시장 배경), (3) 단기/중장기 우선순위로 분리.\n"
+        "근거(발췌):\n"
+        f"{context}\n"
+        "최신 동향(뉴스):\n"
+        f"{news_text}\n"
+    )
+    return invoke_llm(settings=settings, prompt=prompt)
+
+
+def summarize_investment_and_capability(
+    settings: Settings,
+    company_name: str,
+    sources: list[dict[str, str]],
+    news_items: list[dict[str, str]],
+) -> str:
+    context = _rag_context_from_sources(sources)
+    news_text = "\n".join(
+        [
+            f"- {item['title']} | {item['source']} | {item['pub_date']}"
+            for item in news_items[:8]
+        ]
+    )
+    prompt = (
+        f"{company_name}의 '기술 경쟁력 및 투자 현황'을 6~10줄로 요약하세요.\n"
+        "요구사항: R&D/Capex/생산능력/핵심기술/파트너십을 구분하고, 가능하면 근거에서 숫자를 1~3개 포함.\n"
+        "근거(발췌):\n"
+        f"{context}\n"
+        "최신 동향(뉴스):\n"
+        f"{news_text}\n"
+    )
+    return invoke_llm(settings=settings, prompt=prompt)
+
+
 def build_swot(
     settings: Settings, lg_text: str, catl_text: str, market: str
 ) -> tuple[dict[str, dict[str, list[str]]], str]:
@@ -368,9 +443,9 @@ def build_report(state: WorkflowState) -> str:
             "",
             "## 1. 시장 배경",
             "### 1.1 글로벌 전기차 시장 캐즘 현황",
-            state.get("market_rag", ""),
+            state.get("market_chasm", "") or state.get("market_assessment", ""),
             "### 1.2 배터리 산업 패러다임 변화",
-            state.get("market_assessment", ""),
+            state.get("market_paradigm", "") or state.get("market_assessment", ""),
             "### 1.3 HEV 피벗과 완성차 전략 변화",
             state.get("strategy_comparison", ""),
             "",
@@ -378,11 +453,11 @@ def build_report(state: WorkflowState) -> str:
             "",
             "## 2. LG에너지솔루션 전략 분석",
             "### 2.1 현재 사업 포트폴리오",
-            state.get("lg_rag", ""),
+            state.get("lg_portfolio", "") or state.get("lg_tech_summary", ""),
             "### 2.2 다각화 전략",
-            state.get("lg_tech_summary", ""),
+            state.get("lg_diversification", "") or state.get("lg_tech_summary", ""),
             "### 2.3 기술 경쟁력 및 투자 현황",
-            state.get("lg_tech_summary", ""),
+            state.get("lg_investment", "") or state.get("lg_tech_summary", ""),
             "### 2.4 최신 동향",
             "\n".join(
                 [
@@ -395,11 +470,11 @@ def build_report(state: WorkflowState) -> str:
             "",
             "## 3. CATL 전략 분석",
             "### 3.1 현재 사업 포트폴리오",
-            state.get("catl_rag", ""),
+            state.get("catl_portfolio", "") or state.get("catl_tech_summary", ""),
             "### 3.2 다각화 전략",
-            state.get("catl_tech_summary", ""),
+            state.get("catl_diversification", "") or state.get("catl_tech_summary", ""),
             "### 3.3 기술 경쟁력 및 글로벌 확장",
-            state.get("catl_tech_summary", ""),
+            state.get("catl_investment", "") or state.get("catl_tech_summary", ""),
             "### 3.4 최신 동향",
             "\n".join(
                 [
@@ -412,11 +487,7 @@ def build_report(state: WorkflowState) -> str:
             "",
             "## 4. 시장성 평가",
             "### 4.1 글로벌 배터리 시장 규모 및 전망",
-            state.get("market_rag", ""),
-            "### 4.2 LG에너지솔루션 시장성 평가",
-            state.get("lg_tech_summary", ""),
-            "### 4.3 CATL 시장성 평가",
-            state.get("market_assessment", ""),
+            state.get("market_outlook", "") or state.get("market_assessment", ""),
             "",
             "---",
             "",

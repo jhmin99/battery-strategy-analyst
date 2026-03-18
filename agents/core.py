@@ -59,7 +59,9 @@ def _clean_snippet(text: str, max_chars: int = 260) -> str:
     return snippet.strip()
 
 
-def _rag_context_from_sources(sources: list[dict[str, str]], max_items: int = 10) -> str:
+def _rag_context_from_sources(
+    sources: list[dict[str, str]], max_items: int = 10
+) -> str:
     """LLM 입력용 근거 컨텍스트를 간결하게 구성."""
     lines: list[str] = []
     for src in sources[:max_items]:
@@ -384,22 +386,34 @@ def build_swot(
     return swot, comparison
 
 
+def _clean_section(text: Any) -> str:
+    """LLM이 잘못 생성한 앞부분의 마크다운 목차(### 등)를 강제 제거합니다."""
+    if not text:
+        return "- 내용 없음"
+    text_str = str(text).strip()
+    lines = text_str.splitlines()
+
+    # 첫 줄이 '#'으로 시작하거나 빈 줄이면 제거 (반복)
+    while lines and (lines[0].strip().startswith("#") or not lines[0].strip()):
+        lines.pop(0)
+
+    cleaned_text = "\n".join(lines).strip()
+    return cleaned_text if cleaned_text else "- 내용 없음"
+
+
 def build_report(state: WorkflowState) -> str:
     lg_sources = state.get("lg_sources", [])
     catl_sources = state.get("catl_sources", [])
     market_sources = state.get("market_sources", [])
     all_news = state.get("lg_news", [])[:4] + state.get("catl_news", [])[:4]
+
     reference_lines: list[str] = []
     for src in lg_sources:
         filename = Path(src["source"]).name
-        reference_lines.append(
-            f"- [기관보고서] LG PDF ({filename}, p.{src['page']})"
-        )
+        reference_lines.append(f"- [기관보고서] LG PDF ({filename}, p.{src['page']})")
     for src in catl_sources:
         filename = Path(src["source"]).name
-        reference_lines.append(
-            f"- [기관보고서] CATL PDF ({filename}, p.{src['page']})"
-        )
+        reference_lines.append(f"- [기관보고서] CATL PDF ({filename}, p.{src['page']})")
     for src in market_sources:
         filename = Path(src["source"]).name
         reference_lines.append(
@@ -409,11 +423,14 @@ def build_report(state: WorkflowState) -> str:
         reference_lines.append(
             f"- [웹페이지] {item['title']} ({item['link']}, {item['pub_date']})"
         )
+
     if not reference_lines:
         reference_lines = ["- [웹페이지] 출처 없음 (N/A, N/A)"]
+
     swot = state.get("swot", {})
     lg_swot = swot.get("LG에너지솔루션", {"S": [], "W": [], "O": [], "T": []})
     catl_swot = swot.get("CATL", {"S": [], "W": [], "O": [], "T": []})
+
     lg_swot_lines = [
         f"- S: {', '.join(lg_swot.get('S', []))}",
         f"- W: {', '.join(lg_swot.get('W', []))}",
@@ -426,9 +443,8 @@ def build_report(state: WorkflowState) -> str:
         f"- O: {', '.join(catl_swot.get('O', []))}",
         f"- T: {', '.join(catl_swot.get('T', []))}",
     ]
-    # SUMMARY는 market_assessment 전체를 사용하되, 비어 있으면 기본 문구 사용
-    summary_src = state.get("market_assessment", "") or ""
-    summary_text = summary_src.strip() or "- 전체 보고서의 1/2 요약 내용"
+
+    # 💡 여기서 state.get()으로 가져온 모든 텍스트를 _clean_section()으로 감싸줍니다.
     return "\n".join(
         [
             "# 배터리 시장 전략 분석 보고서",
@@ -437,69 +453,71 @@ def build_report(state: WorkflowState) -> str:
             "---",
             "",
             "## SUMMARY",
-            summary_text,
+            _clean_section(state.get("market_assessment", "- 요약 내용 없음")),
             "",
             "---",
             "",
             "## 1. 시장 배경",
             "### 1.1 글로벌 전기차 시장 캐즘 현황",
-            state.get("market_chasm", "") or state.get("market_assessment", ""),
+            _clean_section(state.get("market_chasm")),
             "### 1.2 배터리 산업 패러다임 변화",
-            state.get("market_paradigm", "") or state.get("market_assessment", ""),
+            _clean_section(state.get("market_paradigm")),
             "### 1.3 HEV 피벗과 완성차 전략 변화",
-            state.get("strategy_comparison", ""),
+            _clean_section(state.get("market_hev_pivot")),
             "",
             "---",
             "",
             "## 2. LG에너지솔루션 전략 분석",
             "### 2.1 현재 사업 포트폴리오",
-            state.get("lg_portfolio", "") or state.get("lg_tech_summary", ""),
+            _clean_section(state.get("lg_portfolio")),
             "### 2.2 다각화 전략",
-            state.get("lg_diversification", "") or state.get("lg_tech_summary", ""),
+            _clean_section(state.get("lg_diversification")),
             "### 2.3 기술 경쟁력 및 투자 현황",
-            state.get("lg_investment", "") or state.get("lg_tech_summary", ""),
+            _clean_section(state.get("lg_investment")),
             "### 2.4 최신 동향",
             "\n".join(
                 [
                     f"- {item['title']} ({item['pub_date']})"
                     for item in state.get("lg_news", [])[:6]
                 ]
-            ),
+            )
+            or "- 최신 동향 없음",
             "",
             "---",
             "",
             "## 3. CATL 전략 분석",
             "### 3.1 현재 사업 포트폴리오",
-            state.get("catl_portfolio", "") or state.get("catl_tech_summary", ""),
+            _clean_section(state.get("catl_portfolio")),
             "### 3.2 다각화 전략",
-            state.get("catl_diversification", "") or state.get("catl_tech_summary", ""),
+            _clean_section(state.get("catl_diversification")),
             "### 3.3 기술 경쟁력 및 글로벌 확장",
-            state.get("catl_investment", "") or state.get("catl_tech_summary", ""),
+            _clean_section(state.get("catl_investment")),
             "### 3.4 최신 동향",
             "\n".join(
                 [
                     f"- {item['title']} ({item['pub_date']})"
                     for item in state.get("catl_news", [])[:6]
                 ]
-            ),
+            )
+            or "- 최신 동향 없음",
             "",
             "---",
             "",
             "## 4. 시장성 평가",
             "### 4.1 글로벌 배터리 시장 규모 및 전망",
-            state.get("market_outlook", "") or state.get("market_assessment", ""),
+            _clean_section(state.get("market_outlook")),
             "",
             "---",
             "",
             "## 5. 전략 비교 및 SWOT 분석",
             "### 5.1 핵심 전략 비교표",
-            state.get("strategy_comparison", ""),
+            "양사의 세부 SWOT 및 핵심 전략 비교",
             "### 5.2 LG에너지솔루션 SWOT",
             *lg_swot_lines,
             "### 5.3 CATL SWOT",
             *catl_swot_lines,
             "### 5.4 SWOT 교차 비교 분석",
-            state.get("strategy_comparison", ""),
+            _clean_section(state.get("strategy_comparison")),
             "",
             "---",
             "",

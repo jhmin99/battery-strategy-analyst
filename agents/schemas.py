@@ -23,6 +23,20 @@ class WorkflowState(TypedDict, total=False):
     catl_query_coverage: dict[str, bool]
     lg_tech_summary: str
     catl_tech_summary: str
+
+    # --- 새로 추가해야 할 State 변수들 ---
+    lg_portfolio: str
+    lg_diversification: str
+    lg_investment: str
+    catl_portfolio: str
+    catl_diversification: str
+    catl_investment: str
+    market_chasm: str
+    market_paradigm: str
+    market_hev_pivot: str  # 1.3 목차용
+    market_outlook: str
+    # ------------------------------------
+
     market_rag: str
     market_sources: list[dict[str, str]]
     market_embedding_backend: str
